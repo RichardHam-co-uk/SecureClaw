@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/zebadee2kk/openclaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/zebadee2kk/openclaw/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
-  <a href="https://github.com/zebadee2kk/openclaw/releases"><img src="https://img.shields.io/github/v/release/zebadee2kk/openclaw?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
+  <a href="https://github.com/RichardHam-Co-Uk/secureclaw/actions/workflows/ci.yml?branch=main"><img src="https://img.shields.io/github/actions/workflow/status/RichardHam-Co-Uk/secureclaw/ci.yml?branch=main&style=for-the-badge" alt="CI status"></a>
+  <a href="https://github.com/RichardHam-Co-Uk/secureclaw/releases"><img src="https://img.shields.io/github/v/release/RichardHam-Co-Uk/secureclaw?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
 </p>
 
@@ -92,8 +92,8 @@ For the underlying OpenClaw functionality (channels, agents, voice, canvas), ref
 ### Quick Start (once Stage 1 is complete)
 
 ```bash
-git clone https://github.com/zebadee2kk/openclaw.git
-cd openclaw
+git clone https://github.com/RichardHam-Co-Uk/secureclaw.git
+cd secureclaw
 git checkout secureclaw
 
 # Initialise Vault and all services
