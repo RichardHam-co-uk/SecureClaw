@@ -1,0 +1,51 @@
+# SecureClaw Gateway — Multi-stage build
+# TypeScript / Node.js 20 LTS
+# SRS R8.1: multi-stage, non-root, minimal runtime
+
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+WORKDIR /build
+
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# Copy workspace manifests
+COPY secureclaw/gateway/package.json secureclaw/gateway/pnpm-lock.yaml ./
+
+# Install deps (frozen lockfile for reproducibility)
+RUN pnpm install --frozen-lockfile --prod=false
+
+# Copy source
+COPY secureclaw/gateway/ ./
+
+# Build
+RUN pnpm build
+
+# Audit deps before producing final artefact
+RUN pnpm audit --audit-level=high
+
+# ── Runtime stage ──────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runtime
+
+# SRS R8.1: non-root user
+RUN addgroup -g 1000 secureclaw && adduser -u 1000 -G secureclaw -s /sbin/nologin -D secureclaw
+
+WORKDIR /app
+
+# Copy built artefacts only
+COPY --from=builder --chown=secureclaw:secureclaw /build/dist ./dist
+COPY --from=builder --chown=secureclaw:secureclaw /build/node_modules ./node_modules
+COPY --from=builder --chown=secureclaw:secureclaw /build/package.json ./
+
+# Create required directories with correct ownership
+RUN mkdir -p /app/logs && chown secureclaw:secureclaw /app/logs
+
+USER secureclaw
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+
+CMD ["node", "dist/index.js"]

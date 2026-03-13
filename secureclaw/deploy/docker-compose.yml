@@ -1,0 +1,174 @@
+# SecureClaw — Docker Compose Stack
+# See docs/architecture/ARCHITECTURE.md for service descriptions
+# See docs/security/SRS.md for security requirements
+
+services:
+
+  gateway:
+    build:
+      context: ../
+      dockerfile: deploy/Dockerfile.gateway
+    image: secureclaw/gateway:latest
+    container_name: secureclaw-gateway
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "127.0.0.1:8080:8080"  # Loopback only by default
+    environment:
+      - NODE_ENV=production
+      - SECURECLAW_VAULT_ADDR=http://vault:8200
+      - SECURECLAW_VAULT_TOKEN_FILE=/run/secrets/vault_token
+      - SECURECLAW_AUDIT_LOKI_URL=http://loki:3100
+    secrets:
+      - vault_token
+    volumes:
+      - gateway-logs:/app/logs:rw
+      - /run/secureclaw:/run/secureclaw:rw  # Unix socket for agent IPC
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      vault:
+        condition: service_healthy
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  agent:
+    build:
+      context: ../
+      dockerfile: deploy/Dockerfile.agent
+    image: secureclaw/agent:latest
+    container_name: secureclaw-agent
+    restart: unless-stopped
+    user: "1001:1001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - SECURECLAW_VAULT_ADDR=http://vault:8200
+      - SECURECLAW_VAULT_TOKEN_FILE=/run/secrets/vault_token
+    secrets:
+      - vault_token
+    volumes:
+      - /run/secureclaw:/run/secureclaw:rw  # Unix socket
+      - workspaces:/workspaces:rw
+    networks:
+      - backend
+      - sandbox
+    depends_on:
+      - gateway
+      - vault
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: secureclaw-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=${VAULT_DEV_TOKEN:-changeme-replace-in-production}
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    volumes:
+      - vault-data:/vault/data:rw
+      - vault-logs:/vault/logs:rw
+      - ./vault/config:/vault/config:ro
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # NOTE: Dev mode only. For production, remove VAULT_DEV_* and configure
+    # proper Vault server with TLS and auto-unseal. See docs/runbooks/VAULT_SETUP.md
+
+  loki:
+    image: grafana/loki:latest
+    container_name: secureclaw-loki
+    restart: unless-stopped
+    user: "10001:10001"
+    volumes:
+      - loki-data:/loki:rw
+      - ./loki/config.yml:/etc/loki/config.yml:ro
+    networks:
+      - observability
+    command: -config.file=/etc/loki/config.yml
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: secureclaw-prometheus
+    restart: unless-stopped
+    user: "65534:65534"
+    volumes:
+      - prometheus-data:/prometheus:rw
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - observability
+      - backend
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: secureclaw-grafana
+    restart: unless-stopped
+    user: "472:472"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD__FILE=/run/secrets/grafana_admin_password
+      - GF_SERVER_HTTP_ADDR=127.0.0.1
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - grafana-data:/var/lib/grafana:rw
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "127.0.0.1:3000:3000"  # Loopback only
+    networks:
+      - observability
+    depends_on:
+      - loki
+      - prometheus
+
+secrets:
+  vault_token:
+    file: ./secrets/vault_token.txt  # Generated on first-run, never committed
+  grafana_admin_password:
+    file: ./secrets/grafana_password.txt
+
+volumes:
+  vault-data:
+  vault-logs:
+  loki-data:
+  prometheus-data:
+  grafana-data:
+  gateway-logs:
+  workspaces:
+
+networks:
+  frontend:
+    # External-facing: gateway only
+  backend:
+    # Internal: gateway <-> agent <-> vault
+    internal: true
+  sandbox:
+    # Tool execution: agent <-> sandboxed containers
+    internal: true
+  observability:
+    # Metrics/logs: prometheus/loki/grafana
+    internal: true

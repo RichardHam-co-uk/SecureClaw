@@ -1,0 +1,40 @@
+# SecureClaw Agent Runtime — Multi-stage build
+# Python 3.12
+# SRS R8.1: multi-stage, non-root, minimal runtime
+
+# ── Build stage ────────────────────────────────────────────────────────────────
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+
+# Install uv for fast, reproducible installs
+RUN pip install --no-cache-dir uv
+
+COPY secureclaw/agent/pyproject.toml secureclaw/agent/uv.lock ./
+
+# Install deps into isolated venv
+RUN uv sync --frozen --no-dev
+
+# Audit deps
+RUN uv run pip-audit --desc on
+
+COPY secureclaw/agent/ ./
+
+# ── Runtime stage ──────────────────────────────────────────────────────────────
+FROM python:3.12-slim AS runtime
+
+# SRS R8.1: non-root user
+RUN groupadd -g 1001 secureclaw-agent && \
+    useradd -u 1001 -g secureclaw-agent -s /sbin/nologin -M secureclaw-agent
+
+WORKDIR /app
+
+COPY --from=builder --chown=secureclaw-agent:secureclaw-agent /build/.venv ./.venv
+COPY --from=builder --chown=secureclaw-agent:secureclaw-agent /build/src ./src
+COPY --from=builder --chown=secureclaw-agent:secureclaw-agent /build/pyproject.toml ./
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+USER secureclaw-agent
+
+CMD ["python", "-m", "secureclaw.agent"]

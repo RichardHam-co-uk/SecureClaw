@@ -1,0 +1,118 @@
+# SecureClaw — Security Gates CI
+# SRS R8.2: All gates must pass before merge
+# Runs on every PR and push to secureclaw branch
+
+name: Security Gates
+
+on:
+  push:
+    branches:
+      - secureclaw
+    paths:
+      - 'secureclaw/**'
+  pull_request:
+    branches:
+      - secureclaw
+    paths:
+      - 'secureclaw/**'
+
+jobs:
+
+  semgrep-sast:
+    name: SAST — Semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=auto \
+            --config=p/typescript \
+            --config=p/python \
+            --config=p/owasp-top-ten \
+            --config=p/security-audit \
+            --error \
+            secureclaw/
+
+  snyk-sca:
+    name: SCA — Snyk Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Snyk TypeScript scan
+        uses: snyk/actions/node@master
+        with:
+          args: --severity-threshold=high --file=secureclaw/gateway/package.json
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      - name: Snyk Python scan
+        uses: snyk/actions/python@master
+        with:
+          args: --severity-threshold=high --file=secureclaw/agent/pyproject.toml
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  trivy-container:
+    name: Container Scan — Trivy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build gateway image
+        run: docker build -f secureclaw/deploy/Dockerfile.gateway -t secureclaw/gateway:ci .
+      - name: Trivy scan gateway
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secureclaw/gateway:ci
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+      - name: Build agent image
+        run: docker build -f secureclaw/deploy/Dockerfile.agent -t secureclaw/agent:ci .
+      - name: Trivy scan agent
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secureclaw/agent:ci
+          format: table
+          exit-code: '1'
+          severity: CRITICAL,HIGH
+
+  pip-audit:
+    name: Python Dep Audit — pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pip-audit
+      - run: pip-audit --desc on -r secureclaw/agent/requirements.txt
+
+  config-lint:
+    name: Config Security Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for insecure config patterns
+        run: |
+          # Fail if any insecure defaults found
+          ! grep -r 'auth.*none\|auth.*false\|sandbox.*false\|0\.0\.0\.0' secureclaw/deploy/ \
+            --include='*.yml' --include='*.yaml' --include='*.json' --include='*.toml'
+          echo "Config lint passed"
+
+  adversarial-tests:
+    name: Adversarial Prompt Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run adversarial test suite
+        run: |
+          cd secureclaw
+          pip install -r agent/requirements-dev.txt
+          python -m pytest tests/adversarial/ -v --tb=short
+        # Tests validate that all prompt injection attempts, path traversal,
+        # and SSRF attempts are blocked and logged correctly
